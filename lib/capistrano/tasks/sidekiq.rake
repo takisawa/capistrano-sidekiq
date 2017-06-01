@@ -29,28 +29,36 @@ namespace :deploy do
 end
 
 namespace :sidekiq do
-  def for_each_process(reverse = false, &block)
-    pids = processes_pids
-    pids.reverse! if reverse
-    pids.each_with_index do |pid_file, idx|
+  def for_each_process(reverse: false, &block)
+    attributes = process_attributes
+    attributes.reverse! if reverse
+    attributes.each do |attr|
       within release_path do
-        yield(pid_file, idx)
+        yield attr[:config_file], attr[:pid_file], attr[:index]
       end
     end
   end
 
-  def processes_pids
-    pids = []
-    sidekiq_roles = Array(fetch(:sidekiq_role))
-    sidekiq_roles.each do |role|
-      next unless host.roles.include?(role)
-      processes = fetch(:"#{ role }_processes") || fetch(:sidekiq_processes)
-      processes.times do |idx|
-        pids.push fetch(:sidekiq_pid).gsub(/\.pid$/, "-#{idx}.pid")
+  def process_attributes
+    [].tap do |attributes|
+      process_index = 0
+
+      sidekiq_roles = Array(fetch(:sidekiq_role))
+      sidekiq_roles.each do |role|
+        next unless host.roles.include?(role)
+
+        config_file = fetch(:"#{role}_config") || fetch(:sidekiq_config)
+        processes = fetch(:"#{role}_processes") || fetch(:sidekiq_processes)
+        processes.times do
+          attributes << {
+            config_file: config_file,
+            pid_file: fetch(:sidekiq_pid).gsub(/\.pid$/, "-#{role}-#{process_index}.pid"),
+            index: process_index
+          }
+          process_index += 1
+        end
       end
     end
-
-    pids
   end
 
   def pid_process_exists?(pid_file)
@@ -86,7 +94,7 @@ namespace :sidekiq do
     end
   end
 
-  def start_sidekiq(pid_file, idx = 0)
+  def start_sidekiq(config_file, pid_file, idx = 0)
     args = []
     args.push "--index #{idx}"
     args.push "--pidfile #{pid_file}"
@@ -97,7 +105,7 @@ namespace :sidekiq do
     Array(fetch(:sidekiq_queue)).each do |queue|
       args.push "--queue #{queue}"
     end
-    args.push "--config #{fetch(:sidekiq_config)}" if fetch(:sidekiq_config)
+    args.push "--config #{config_file}"
     args.push "--concurrency #{fetch(:sidekiq_concurrency)}" if fetch(:sidekiq_concurrency)
     if process_options = fetch(:sidekiq_options_per_process)
       args.push process_options[idx]
@@ -131,7 +139,7 @@ namespace :sidekiq do
     on roles fetch(:sidekiq_role) do |role|
       switch_user(role) do
         if test("[ -d #{release_path} ]") # fixes #11
-          for_each_process(true) do |pid_file, idx|
+          for_each_process(reverse: true) do |config_file, pid_file, idx|
             if pid_process_exists?(pid_file)
               quiet_sidekiq(pid_file)
             end
@@ -146,7 +154,7 @@ namespace :sidekiq do
     on roles fetch(:sidekiq_role) do |role|
       switch_user(role) do
         if test("[ -d #{release_path} ]")
-          for_each_process(true) do |pid_file, idx|
+          for_each_process(reverse: true) do |config_file, pid_file, idx|
             if pid_process_exists?(pid_file)
               stop_sidekiq(pid_file)
             end
@@ -161,8 +169,8 @@ namespace :sidekiq do
   task :start do
     on roles fetch(:sidekiq_role) do |role|
       switch_user(role) do
-        for_each_process do |pid_file, idx|
-          start_sidekiq(pid_file, idx) unless pid_process_exists?(pid_file)
+        for_each_process do |config_file, pid_file, idx|
+          start_sidekiq(config_file, pid_file, idx) unless pid_process_exists?(pid_file)
         end
       end
     end
@@ -178,7 +186,7 @@ namespace :sidekiq do
   task :rolling_restart do
     on roles fetch(:sidekiq_role) do |role|
       switch_user(role) do
-        for_each_process(true) do |pid_file, idx|
+        for_each_process(reverse: true) do |config_file, pid_file, idx|
           if pid_process_exists?(pid_file)
             stop_sidekiq(pid_file)
           end
@@ -192,7 +200,7 @@ namespace :sidekiq do
   task :cleanup do
     on roles fetch(:sidekiq_role) do |role|
       switch_user(role) do
-        for_each_process do |pid_file, idx|
+        for_each_process do |config_file, pid_file, idx|
           if pid_file_exists?(pid_file)
             execute "rm #{pid_file}" unless pid_process_exists?(pid_file)
           end
@@ -207,9 +215,9 @@ namespace :sidekiq do
     invoke 'sidekiq:cleanup'
     on roles fetch(:sidekiq_role) do |role|
       switch_user(role) do
-        for_each_process do |pid_file, idx|
+        for_each_process do |config_file, pid_file, idx|
           unless pid_file_exists?(pid_file)
-            start_sidekiq(pid_file, idx)
+            start_sidekiq(config_file, pid_file, idx)
           end
         end
       end
