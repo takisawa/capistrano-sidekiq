@@ -34,13 +34,16 @@ namespace :sidekiq do
         sudo_if_needed mv_command
 
         sudo_if_needed "#{fetch(:monit_bin)} reload"
+
+        # Wait for Monit to be reloaded
+        sleep 3
       end
     end
 
     desc 'Monitor Sidekiq monit-service'
     task :monitor do
       on roles(fetch(:sidekiq_role)) do
-        fetch(:sidekiq_processes).times do |idx|
+        for_each_process do |config_file, pid_file, idx|
           begin
             sudo_if_needed "#{fetch(:monit_bin)} monitor #{sidekiq_service_name(idx)}"
           rescue
@@ -54,7 +57,7 @@ namespace :sidekiq do
     desc 'Unmonitor Sidekiq monit-service'
     task :unmonitor do
       on roles(fetch(:sidekiq_role)) do
-        fetch(:sidekiq_processes).times do |idx|
+        for_each_process do |config_file, pid_file, idx|
           begin
             sudo_if_needed "#{fetch(:monit_bin)} unmonitor #{sidekiq_service_name(idx)}"
           rescue
@@ -67,7 +70,7 @@ namespace :sidekiq do
     desc 'Start Sidekiq monit-service'
     task :start do
       on roles(fetch(:sidekiq_role)) do
-        fetch(:sidekiq_processes).times do |idx|
+        for_each_process do |config_file, pid_file, idx|
           sudo_if_needed "#{fetch(:monit_bin)} start #{sidekiq_service_name(idx)}"
         end
       end
@@ -76,7 +79,7 @@ namespace :sidekiq do
     desc 'Stop Sidekiq monit-service'
     task :stop do
       on roles(fetch(:sidekiq_role)) do
-        fetch(:sidekiq_processes).times do |idx|
+        for_each_process do |config_file, pid_file, idx|
           sudo_if_needed "#{fetch(:monit_bin)} stop #{sidekiq_service_name(idx)}"
         end
       end
@@ -85,7 +88,7 @@ namespace :sidekiq do
     desc 'Restart Sidekiq monit-service'
     task :restart do
       on roles(fetch(:sidekiq_role)) do
-        fetch(:sidekiq_processes).times do |idx|
+        for_each_process do |config_file, pid_file, idx|
           sudo_if_needed"#{fetch(:monit_bin)} restart #{sidekiq_service_name(idx)}"
         end
       end
